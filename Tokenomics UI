@@ -1,0 +1,100 @@
+import { useState, useMemo } from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  LineChart,
+  Line,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
+  Scatter,
+} from "recharts";
+import { motion } from "framer-motion";
+
+/**
+ * TokenomicsDashboard – minimalist sliders version
+ * -------------------------------------------------
+ *  • Two sliders: Validators (1‑100) & Block‑space demand % (0‑100).
+ *  • Toggle X‑axis between validators and demand.
+ *  • Shows full curve + marker + numeric net rate.
+ *  • No validator table or extra inputs.
+ */
+
+// constants
+const APR_MAX = 0.25;
+const k = 0.349485;
+const STAKE_PER_VAL = 100_000;
+const SUPPLY_BASE = 1_000_000;
+
+export default function TokenomicsDashboard() {
+  const [validatorCount, setValidatorCount] = useState(19);
+  const [demandPct, setDemandPct] = useState(50);
+  const [xMode, setXMode] = useState<'validators' | 'demand'>('validators');
+
+  const pct = (x: number) => (x * 100).toFixed(2);
+
+  const supply = Math.max(SUPPLY_BASE, validatorCount * STAKE_PER_VAL);
+
+  const netRate = (n: number, d: number) => {
+    const apr = APR_MAX * Math.pow(n, -k);
+    const issuance = apr * supply;
+    const burn = 0.10 * (d / 100) * supply;
+    return (issuance - burn) / supply;
+  };
+
+  const activeRate = netRate(validatorCount, demandPct);
+
+  const curveData = useMemo(() => {
+    if (xMode === 'validators') {
+      return Array.from({ length: 100 }, (_, i) => ({ x: i + 1, y: netRate(i + 1, demandPct) }));
+    }
+    return Array.from({ length: 101 }, (_, i) => ({ x: i, y: netRate(validatorCount, i) }));
+  }, [xMode, validatorCount, demandPct, supply]);
+
+  return (
+    <motion.div className="w-full max-w-4xl mx-auto p-4 space-y-8" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+      {/* sliders */}
+      <Card>
+        <CardContent className="p-6 grid md:grid-cols-2 gap-6">
+          <SliderField label="Validators" value={validatorCount} min={1} max={100} onChange={setValidatorCount} />
+          <SliderField label="Block-space demand %" value={demandPct} min={0} max={100} onChange={setDemandPct} />
+        </CardContent>
+      </Card>
+
+      {/* toggle + chart */}
+      <Card>
+        <CardContent className="p-6 space-y-4">
+          <div className="flex gap-2 mb-2">
+            <button className={`border px-3 py-1 rounded ${xMode==='validators'?'bg-primary text-white':''}`} onClick={()=>setXMode('validators')}>X-axis: Validators</button>
+            <button className={`border px-3 py-1 rounded ${xMode==='demand'?'bg-primary text-white':''}`} onClick={()=>setXMode('demand')}>X-axis: Demand %</button>
+          </div>
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={curveData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="x" tickFormatter={xMode==='demand'?(v)=>`${v}%`:undefined} />
+              <YAxis domain={[-0.05, 0.25]} tickFormatter={(v)=>`${(v*100).toFixed(0)}%`} />
+              <ReferenceLine y={0} stroke="#888" strokeDasharray="4 4" />
+              <Tooltip formatter={(v:number)=>`${(v*100).toFixed(2)}%`} />
+              <Line type="monotone" dataKey="y" strokeWidth={2} dot={false} />
+              <Scatter data={[{ x: xMode==='validators'?validatorCount:demandPct, y: activeRate }]} fill="#EF4444" />
+            </LineChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      {/* numeric read‑out */}
+      <Card><CardContent className="text-center"><p className="text-sm text-muted-foreground">Net rate</p><p className="text-3xl font-semibold">{pct(activeRate)} %</p></CardContent></Card>
+    </motion.div>
+  );
+}
+
+function SliderField({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (v: number) => void }) {
+  return (
+    <div className="space-y-2">
+      <label className="block text-sm font-medium">{label}: {value}</label>
+      <input type="range" min={min} max={max} value={value} onChange={(e) => onChange(Number(e.target.value))} className="w-full" />
+    </div>
+  );
+}
