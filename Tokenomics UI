@@ -1,100 +1,252 @@
-import { useState, useMemo } from "react";
+'use client';
+
+import React, { useState, useMemo, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
 import {
-  LineChart,
-  Line,
-  CartesianGrid,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   Tooltip,
   ResponsiveContainer,
-  ReferenceLine,
-  Scatter,
+  LabelList,
 } from "recharts";
-import { motion } from "framer-motion";
 
 /**
- * TokenomicsDashboard – minimalist sliders version
- * -------------------------------------------------
- *  • Two sliders: Validators (1‑100) & Block‑space demand % (0‑100).
- *  • Toggle X‑axis between validators and demand.
- *  • Shows full curve + marker + numeric net rate.
- *  • No validator table or extra inputs.
+ * XYZ Chain ‑ Tokenomics Playground (2025 parameters)
+ * --------------------------------------------------
+ * • Fixed genesis supply: 1 000 000 000 XYZ
+ * • Ideal validator set: 19 nodes (PoA → PoS bridge)
+ * • Dynamic APR corridor: 5 % – 20 %
+ * • Reference stake ↔ capital accessibility: 2 500 000 XYZ ≈ $125 k
+ * • Burn budget at 100 % usage: 5 000 000 XYZ / year (≈ 0.5 % of supply)
+ *
+ * The simulator lets you vary:
+ *   – Validator count (1 – 100)
+ *   – Uniform or per‑validator stakes (0.5 M – 2 M XYZ)
+ *   – Network‑usage burn (0 – BURN_MAX)
+ *
+ * It then shows APR, issuance, burn, and net supply change
+ * under the **new 2025 tokenomics formula**.
  */
+export default function TokenomicsSimulator() {
+  // ---------- Chain constants (2025 spec) ----------
+  const GENESIS_SUPPLY = 1_000_000_000;      // XYZ
+  const MIN_STAKE = 500_000;                 // XYZ
+  const MAX_STAKE = 2_000_000;               // XYZ
+  const REF_STAKE = 2_500_000;               // XYZ (≈ $125 k at $0.05)
+  const V_TARGET  = 19;                      // ideal validator count
+  const APR_MIN   = 0.05;                    // 5 %
+  const APR_MAX   = 0.20;                    // 20 %
+  const BURN_MAX  = 5_000_000;               // XYZ burned per yr @ 100 % usage
 
-// constants
-const APR_MAX = 0.25;
-const k = 0.349485;
-const STAKE_PER_VAL = 100_000;
-const SUPPLY_BASE = 1_000_000;
-
-export default function TokenomicsDashboard() {
-  const [validatorCount, setValidatorCount] = useState(19);
-  const [demandPct, setDemandPct] = useState(50);
-  const [xMode, setXMode] = useState<'validators' | 'demand'>('validators');
-
-  const pct = (x: number) => (x * 100).toFixed(2);
-
-  const supply = Math.max(SUPPLY_BASE, validatorCount * STAKE_PER_VAL);
-
-  const netRate = (n: number, d: number) => {
-    const apr = APR_MAX * Math.pow(n, -k);
-    const issuance = apr * supply;
-    const burn = 0.10 * (d / 100) * supply;
-    return (issuance - burn) / supply;
-  };
-
-  const activeRate = netRate(validatorCount, demandPct);
-
-  const curveData = useMemo(() => {
-    if (xMode === 'validators') {
-      return Array.from({ length: 100 }, (_, i) => ({ x: i + 1, y: netRate(i + 1, demandPct) }));
-    }
-    return Array.from({ length: 101 }, (_, i) => ({ x: i, y: netRate(validatorCount, i) }));
-  }, [xMode, validatorCount, demandPct, supply]);
-
-  return (
-    <motion.div className="w-full max-w-4xl mx-auto p-4 space-y-8" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-      {/* sliders */}
-      <Card>
-        <CardContent className="p-6 grid md:grid-cols-2 gap-6">
-          <SliderField label="Validators" value={validatorCount} min={1} max={100} onChange={setValidatorCount} />
-          <SliderField label="Block-space demand %" value={demandPct} min={0} max={100} onChange={setDemandPct} />
-        </CardContent>
-      </Card>
-
-      {/* toggle + chart */}
-      <Card>
-        <CardContent className="p-6 space-y-4">
-          <div className="flex gap-2 mb-2">
-            <button className={`border px-3 py-1 rounded ${xMode==='validators'?'bg-primary text-white':''}`} onClick={()=>setXMode('validators')}>X-axis: Validators</button>
-            <button className={`border px-3 py-1 rounded ${xMode==='demand'?'bg-primary text-white':''}`} onClick={()=>setXMode('demand')}>X-axis: Demand %</button>
-          </div>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={curveData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="x" tickFormatter={xMode==='demand'?(v)=>`${v}%`:undefined} />
-              <YAxis domain={[-0.05, 0.25]} tickFormatter={(v)=>`${(v*100).toFixed(0)}%`} />
-              <ReferenceLine y={0} stroke="#888" strokeDasharray="4 4" />
-              <Tooltip formatter={(v:number)=>`${(v*100).toFixed(2)}%`} />
-              <Line type="monotone" dataKey="y" strokeWidth={2} dot={false} />
-              <Scatter data={[{ x: xMode==='validators'?validatorCount:demandPct, y: activeRate }]} fill="#EF4444" />
-            </LineChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
-
-      {/* numeric read‑out */}
-      <Card><CardContent className="text-center"><p className="text-sm text-muted-foreground">Net rate</p><p className="text-3xl font-semibold">{pct(activeRate)} %</p></CardContent></Card>
-    </motion.div>
+  // ---------- UI state ----------
+  const [validators, setValidators] = useState(10);
+  const [uniformStake, setUniformStake] = useState(true);
+  const [stake, setStake] = useState(1_500_000); // uniform stake value (XYZ)
+  const [customStakes, setCustomStakes] = useState<number[]>(() =>
+    Array.from({ length: 10 }, () => 1_500_000)
   );
-}
+  const [burn, setBurn] = useState(2_500_000);   // XYZ burned / year (usage proxy)
 
-function SliderField({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (v: number) => void }) {
+  // Keep customStakes array length synced with validator count
+  useEffect(() => {
+    setCustomStakes((prev) => {
+      const next = [...prev];
+      if (validators > prev.length) {
+        for (let i = prev.length; i < validators; i++) next.push(1_500_000);
+      } else if (validators < prev.length) {
+        next.length = validators;
+      }
+      return next;
+    });
+  }, [validators]);
+
+  // ---------- Economics ----------
+  /**
+   * Dynamic APR (2025)
+   * ----------------------------------------------
+   * apr_raw = APR_MIN + (APR_MAX - APR_MIN) * max(0, 1 - v / V_TARGET)
+   * stakeScale = (REF_STAKE * v) / totalStaked
+   * APR = clip(apr_raw * stakeScale, APR_MIN, APR_MAX)
+   */
+
+  const totalStaked = useMemo(() => {
+    return uniformStake
+      ? stake * validators
+      : customStakes.reduce((sum, s) => sum + s, 0);
+  }, [uniformStake, stake, customStakes, validators]);
+
+  // raw APR depends only on validator count relative to target
+  const aprRaw = APR_MIN + (APR_MAX - APR_MIN) * Math.max(0, 1 - validators / V_TARGET);
+  // scale APR if average stake deviates from reference (capital efficiency)
+  const stakeScale = (REF_STAKE * validators) / totalStaked;
+  const apr = Math.min(APR_MAX, Math.max(APR_MIN, aprRaw * stakeScale));
+
+  const annualIssuance = totalStaked * apr;
+  const annualBurn = burn;               // direct slider in XYZ (0 → BURN_MAX)
+  const netChange = annualIssuance - annualBurn;
+  const supplyAfterYear = GENESIS_SUPPLY + netChange;
+
+  const validatorEarnings = useMemo(() => {
+    const list = uniformStake ? Array(validators).fill(stake) : customStakes;
+    return list.map((s) => s * apr);
+  }, [uniformStake, validators, stake, customStakes, apr]);
+
+  const totalStakePct = (totalStaked / GENESIS_SUPPLY) * 100;
+  const chartData = [
+    { name: "Issuance", value: annualIssuance },
+    { name: "Burn",     value: annualBurn     },
+  ];
+
+  // ---------- UI ----------
   return (
-    <div className="space-y-2">
-      <label className="block text-sm font-medium">{label}: {value}</label>
-      <input type="range" min={min} max={max} value={value} onChange={(e) => onChange(Number(e.target.value))} className="w-full" />
+    <div className="p-6 space-y-6 max-w-6xl mx-auto">
+      <h1 className="text-3xl font-bold mb-4">XYZ Tokenomics Simulator (2025)</h1>
+
+      {/* Validators slider */}
+      <Card>
+        <CardContent className="p-6 space-y-3">
+          <h2 className="font-semibold">Validators: {validators}</h2>
+          <Slider
+            min={1}
+            max={100}
+            step={1}
+            value={[validators]}
+            onValueChange={([v]) => setValidators(v)}
+          />
+          <p className="text-xs text-muted-foreground">Target = {V_TARGET} validators — APR tapers once reached</p>
+        </CardContent>
+      </Card>
+
+      {/* Toggle uniform vs custom stakes */}
+      <Card>
+        <CardContent className="p-6 flex items-center gap-4">
+          <Switch
+            checked={uniformStake}
+            onCheckedChange={(v) => setUniformStake(v)}
+          />
+          <span className="font-medium">
+            {uniformStake ? "Uniform stake for all validators" : "Custom stakes"}
+          </span>
+        </CardContent>
+      </Card>
+
+      {/* Stake controls */}
+      {uniformStake ? (
+        <Card>
+          <CardContent className="p-6 space-y-3">
+            <h2 className="font-semibold">
+              Stake per validator: {stake.toLocaleString()} XYZ ( {( (stake / GENESIS_SUPPLY) * 100).toFixed(4)} % of supply )
+            </h2>
+            <Slider
+              min={MIN_STAKE}
+              max={MAX_STAKE}
+              step={10_000}
+              value={[stake]}
+              onValueChange={([v]) => setStake(v)}
+            />
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent className="p-6 space-y-4">
+            <h2 className="font-semibold mb-2">Custom stake per validator</h2>
+            <div className="max-h-64 overflow-y-auto divide-y">
+              {customStakes.map((s, i) => (
+                <div key={i} className="flex items-center py-2 gap-3 text-sm">
+                  <span className="w-28">Validator {i + 1}</span>
+                  <Input
+                    type="number"
+                    min={MIN_STAKE}
+                    max={MAX_STAKE}
+                    step={10_000}
+                    value={s}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setCustomStakes((prev) => {
+                        const next = [...prev];
+                        next[i] = val;
+                        return next;
+                      });
+                    }}
+                    className="w-36"
+                  />
+                  <span className="text-muted-foreground">{((s / GENESIS_SUPPLY) * 100).toFixed(4)} %</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Burn slider */}
+      <Card>
+        <CardContent className="p-6 space-y-3">
+          <h2 className="font-semibold">
+            Annual burn (usage): {burn.toLocaleString()} XYZ / {BURN_MAX.toLocaleString()} XYZ
+          </h2>
+          <Slider
+            min={0}
+            max={BURN_MAX}
+            step={100_000}
+            value={[burn]}
+            onValueChange={([v]) => setBurn(v)}
+          />
+          <p className="text-xs text-muted-foreground">Drag to simulate network demand — red = deflation zone</p>
+        </CardContent>
+      </Card>
+
+      {/* Outputs */}
+      <div className="grid lg:grid-cols-2 gap-6">
+        <Card>
+          <CardContent className="p-6 space-y-2">
+            <h2 className="font-semibold text-xl mb-2">Validator Earnings</h2>
+            <p>APR: {(apr * 100).toFixed(2)} %</p>
+            <p>Total staked: {totalStaked.toLocaleString()} XYZ ({totalStakePct.toFixed(3)} % of supply)</p>
+            <p>
+              Avg. earnings per validator / yr: {(
+                validatorEarnings.reduce((a, b) => a + b, 0) / validators
+              ).toLocaleString(undefined, { maximumFractionDigits: 2 })} XYZ
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-6 space-y-2">
+            <h2 className="font-semibold text-xl mb-2">Supply After 1 Year</h2>
+            <p>
+              Net change: {netChange.toLocaleString(undefined, { maximumFractionDigits: 2 })} XYZ ({((netChange / GENESIS_SUPPLY) * 100).toFixed(3)} %)
+            </p>
+            <p>
+              New supply: {supplyAfterYear.toLocaleString(undefined, { maximumFractionDigits: 2 })} XYZ
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Chart */}
+      <Card>
+        <CardContent className="p-6">
+          <h2 className="font-semibold text-xl mb-4">Issuance vs Burn (annual)</h2>
+          <div className="w-full h-64">
+            <ResponsiveContainer>
+              <BarChart data={chartData} barCategoryGap={50}>
+                <XAxis dataKey="name" />
+                <YAxis tickFormatter={(v) => v.toLocaleString()} />
+                <Tooltip formatter={(v: number) => v.toLocaleString()} />
+                <Bar dataKey="value">
+                  <LabelList dataKey="value" formatter={(v: number) => v.toLocaleString()} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
+
