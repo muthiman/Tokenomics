@@ -13,5 +13,7 @@
     "recharts": "latest",
     "framer-motion": "latest",
     "lucide-react": "latest"
+    "@radix-ui/react-slider": "^1.1.0",
+    "@radix-ui/react-switch": "^1.0.0"
   }
 }
